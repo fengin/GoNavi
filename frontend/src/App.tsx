@@ -803,7 +803,7 @@ function App() {
   };
   
   // Sidebar Resizing
-  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [sidebarWidth, setSidebarWidth] = useState(330);
   const sidebarDragRef = React.useRef<{ startX: number, startWidth: number } | null>(null);
   const rafRef = React.useRef<number | null>(null);
   const ghostRef = React.useRef<HTMLDivElement>(null);
