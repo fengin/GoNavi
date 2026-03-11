@@ -136,9 +136,59 @@ func (k *KingbaseDB) Connect(config connection.ConnectionConfig) error {
 		if idx > 0 {
 			logger.Warnf("人大金仓 SSL 优先连接失败，已回退至明文连接")
 		}
+		// 连接成功后自动设置 search_path，使用户 SQL 不需要手动带 schema 前缀
+		k.initSearchPath()
 		return nil
 	}
 	return fmt.Errorf("连接建立后验证失败：%s", strings.Join(failures, "；"))
+}
+
+// initSearchPath 查询当前数据库中所有用户 schema，并设置 search_path 以确保
+// 用户在 SQL 编辑器中不带 schema 前缀也能找到表。
+// KingBase 默认 search_path 为 "$user", public，对于自定义 schema 下的表不可见。
+func (k *KingbaseDB) initSearchPath() {
+	if k.conn == nil {
+		return
+	}
+
+	query := `SELECT nspname FROM pg_namespace
+		WHERE nspname NOT IN ('pg_catalog', 'information_schema')
+		  AND nspname NOT LIKE 'pg_%'
+		ORDER BY nspname`
+
+	rows, err := k.conn.Query(query)
+	if err != nil {
+		logger.Warnf("人大金仓查询用户 schema 失败，跳过 search_path 设置：%v", err)
+		return
+	}
+	defer rows.Close()
+
+	var schemas []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		if name != "" {
+			// 使用 SQL 标准的双引号包裹标识符，内部双引号需要转义为 ""
+			escaped := strings.ReplaceAll(name, `"`, `""`)
+			schemas = append(schemas, `"`+escaped+`"`)
+		}
+	}
+
+	if len(schemas) == 0 {
+		return
+	}
+
+	// 确保 public 在列表中（如果存在的话），构建 search_path
+	setSQL := fmt.Sprintf("SET search_path TO %s", strings.Join(schemas, ", "))
+	if _, err := k.conn.Exec(setSQL); err != nil {
+		logger.Warnf("人大金仓设置 search_path 失败：%v SQL=%s", err, setSQL)
+		return
+	}
+
+	logger.Infof("人大金仓 search_path 已设置：%s", strings.Join(schemas, ", "))
 }
 
 func (k *KingbaseDB) Close() error {
